@@ -941,13 +941,13 @@ def render_cn_page():
     )
 
     cn_online_file = st.sidebar.file_uploader(
-        "Express - Online (ARTRNSRD_o.csv)",
+        "Express - Online ",
         type=["csv", "txt"],
         key="cn_online"
     )
 
     cn_call_file = st.sidebar.file_uploader(
-        "Express - Call Center (ARTRNSRD_c.csv)",
+        "Express - Call Center ",
         type=["csv", "txt"],
         key="cn_call"
     )
@@ -1312,7 +1312,7 @@ cat_file = st.sidebar.file_uploader(
 # =========================================================
 
 report_file = st.sidebar.file_uploader(
-    "ใบรายงาน",
+    "ใบรายงาน (ไฟล์รายงานเบล)",
     type=["xlsx", "xls"],
     key="report"
 )
@@ -1330,7 +1330,7 @@ st.sidebar.markdown(
 )
 
 st.sidebar.caption(
-    "① อัปโหลด Shipnity + ใบรายงาน\n"
+    "① อัปโหลด Shipnity + ใบรายงาน(รายงานเบล dive D.)\n"
     "② กดประมวลผล\n"
     "③ ดู Dashboard / ตรวจออเดอร์"
 )
@@ -1525,7 +1525,7 @@ if st.session_state.result is None:
         </div>
         """,
         unsafe_allow_html=True
-    )
+    )   
 
     st.info(
         "รองรับ Excel .xlsx / .xls"
