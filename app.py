@@ -552,6 +552,16 @@ def build_comparison(
     ).round(2)
 
     # =====================================================
+    # กลุ่ม (Online Marketing / Call Center)
+    # ใช้กลุ่มจาก Shipnity ก่อน ถ้าไม่มีให้ใช้กลุ่มจากใบรายงาน
+    # =====================================================
+
+    compare["กลุ่ม"] = (
+        compare["Channel_Category_Shipnity"]
+        .fillna(compare["Channel_Category_ใบรายงาน"])
+    )
+
+    # =====================================================
     # Both
     # =====================================================
 
@@ -2337,7 +2347,7 @@ with tab3:
 
     cols = [
         "เลขที่ออเดอร์",
-        "order_number",
+        "กลุ่ม",
         "ยอดขาย_Shipnity",
         "ยอดขาย_ใบรายงาน",
         "ส่วนต่างยอดขาย",
@@ -2357,8 +2367,24 @@ with tab3:
     # Display
     # =====================================================
 
+    # รวมเลขที่ออเดอร์เป็นคอลัมน์เดียว
+    # (ออเดอร์ที่มีเฉพาะใบรายงานจะใช้เลขจาก order_number แทน)
+
+    display_table = table.copy()
+
+    if "order_number" in display_table.columns:
+
+        display_table["เลขที่ออเดอร์"] = (
+            display_table["เลขที่ออเดอร์"]
+            .fillna(display_table["order_number"])
+        )
+
+        display_table = display_table.drop(
+            columns=["order_number"]
+        )
+
     st.dataframe(
-        table[cols].style.format(
+        display_table[cols].style.format(
             {
                 "ยอดขาย_Shipnity":
                     "{:,.2f}",
@@ -2379,7 +2405,7 @@ with tab3:
     # CSV
     # =====================================================
 
-    csv = table.to_csv(
+    csv = display_table.to_csv(
         index=False
     ).encode(
         "utf-8-sig"
