@@ -1330,7 +1330,7 @@ st.sidebar.markdown(
 )
 
 st.sidebar.caption(
-    "① อัปโหลด Shipnity + ใบรายงาน(รายงานเบล dive D.)\n"
+    "① อัปโหลด Shipnity + ใบรายงาน(รายงานเบล dive Y.)\n"
     "② กดประมวลผล\n"
     "③ ดู Dashboard / ตรวจออเดอร์"
 )
