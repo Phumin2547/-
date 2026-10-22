@@ -11,6 +11,7 @@ st.set_page_config(
 
 from order_cn_page import render_order_cn_page  # noqa: E402
 from styles import apply_styles  # noqa: E402
+from order_detail_page import render_order_detail_page  # noqa: E402
 from ui import sidebar_brand, sidebar_status  # noqa: E402
 from work_files_page import render_work_files_page  # noqa: E402
 
@@ -20,6 +21,7 @@ apply_styles()
 FEATURES = [
     "📋 ตรวจสอบ Order & CN",
     "🗂️ ไฟล์งาน",
+    "🔎 รายละเอียดออเดอร์",
 ]
 
 if st.session_state.get("feature") not in FEATURES:
@@ -49,3 +51,6 @@ if st.session_state.feature == FEATURES[0]:
 
 if st.session_state.feature == FEATURES[1]:
     render_work_files_page()
+
+if st.session_state.feature == FEATURES[2]:
+    render_order_detail_page()
