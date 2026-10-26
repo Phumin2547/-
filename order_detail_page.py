@@ -1,11 +1,10 @@
 """หน้า "รายละเอียดออเดอร์" — เทียบใบกำกับ Express (Online / Call Center) กับ Shipnity โปรโมชั่น
 
-หน้านี้ทำหน้าที่ดึงไฟล์ที่อัปโหลดมาประมวลผลด้วยโค้ด Python (พอร์ตจากโน้ตบุ๊ก Colab)
-แล้วแสดงเฉพาะผลลัพธ์ของโค้ดนั้น:
-    ตารางเปรียบเทียบยอดขาย CSV vs Shipnity
-    ตรวจเลขที่ใบกำกับ IK / WG / IE
-    รหัสสินค้า / ชื่อรายการ รายใบกำกับ
-    จับคู่บล็อก Shipnity กับใบกำกับ CSV
+แบ่งเป็น 4 แท็บ ข้อมูลแต่ละอย่างแสดงที่เดียว:
+    📊 ภาพรวม          เทียบยอด CSV vs Shipnity + สรุปตามขนส่ง
+    ✅ ตรวจใบกำกับ      สถานะรายใบกำกับ IK / WG / IE
+    🧩 รายการสินค้า      ออเดอร์และรหัสสินค้าในแต่ละใบกำกับ
+    🔎 ค้นหาออเดอร์      ค้นหาเลขออเดอร์ ดูรายบรรทัด
 
 ไฟล์ที่ใช้: 1) Shipnity โปรโมชั่น (.xlsx)  2) Express Online (.csv)  3) Express Call Center (.csv)
 """
@@ -190,7 +189,7 @@ def _carrier_of(group):
 
 @st.cache_data(show_spinner=False)
 def _invoice_compare(promo_data, online_data, call_data):
-    """คืน dict ผลเทียบทั้งหมด (ตรงกับ cell 0 และ cell 1 ของโน้ตบุ๊ก)"""
+    """คืน dict ผลเทียบทั้งหมด"""
 
     df_online = _csv_lines(online_data)
     df_call = _csv_lines(call_data)
@@ -273,37 +272,17 @@ def _invoice_compare(promo_data, online_data, call_data):
              on_bill + cc_bill, on_ord + cc_ord, on_sales + cc_sales),
     ])
 
-    # ---------- 2) จับคู่บล็อก Shipnity กับใบกำกับ CSV ด้วยยอดเงิน ----------
+    # ---------- 2) ขนส่ง / วิธีชำระ ของแต่ละบล็อก ----------
 
-    blk = (
+    carrier_blocks = (
         ship_orders.groupby(["บล็อก", "ช่องทางการเปิดบิล", "กลุ่ม"], sort=True)
         .agg(ออเดอร์=("เลขที่ออเดอร์", "nunique"), ยอด_Shipnity=("ยอดขาย", "sum"))
         .reset_index()
     )
 
-    carrier_blocks = blk.copy()
-
     carrier_blocks[["ขนส่ง", "ชำระ"]] = [_carrier_of(g) for g in carrier_blocks["กลุ่ม"]]
 
     csv_all = pd.concat([on_orders, cc_orders], ignore_index=True)
-
-    blk["key"] = blk["ยอด_Shipnity"].round(2)
-    csv_all["key"] = csv_all["ยอดขาย"].round(2)
-
-    block_check = blk.merge(
-        csv_all[["key", "เลขที่ใบกำกับสินค้า", "ยอดขาย"]],
-        on="key", how="outer", indicator=True
-    ).rename(columns={"ยอดขาย": "ยอด_CSV"})
-
-    block_check["สถานะ"] = block_check["_merge"].astype(str).map({
-        "both": "ตรงกัน",
-        "left_only": "มีใน Shipnity ไม่มีใน CSV",
-        "right_only": "มีใน CSV ไม่มีใน Shipnity",
-    })
-
-    block_check[["บล็อก", "ออเดอร์"]] = block_check[["บล็อก", "ออเดอร์"]].astype("Int64")
-
-    block_check = block_check.drop(columns=["key", "_merge"])
 
     # ---------- 3) ตรวจเลขที่ใบกำกับ IK / WG / IE ----------
 
@@ -430,7 +409,6 @@ def _invoice_compare(promo_data, online_data, call_data):
 
     return {
         "comparison": comparison,
-        "block_check": block_check,
         "inv_check": inv_check,
         "items": items,
         "carrier_blocks": carrier_blocks,
@@ -447,15 +425,167 @@ INV_STATUS_TONE = {
     "ไม่มีใน CSV": "red",
 }
 
+# สีพื้นของคอลัมน์ "สถานะ" ในตาราง (ตัวอักษรเข้มเสมอ อ่านง่ายทั้งโหมดสว่าง/มืด)
+STATUS_BG = {
+    "ตรงกัน": "#DDF3E4",
+    "ยอดไม่ตรง": "#FFF0C7",
+    "Shipnity มากกว่า": "#FFF0C7",
+    "CSV มากกว่า": "#FAD9D9",
+    "ไม่มีใน Shipnity": "#FAD9D9",
+    "ไม่มีใน CSV": "#FAD9D9",
+}
 
-def _carrier_card(blocks):
-    """สรุปตามขนส่ง: จำนวนออเดอร์ ยอดขาย COD ที่ต้องเก็บ และกราฟ"""
+
+def _paint_status(col):
+    """ระบายสีคอลัมน์สถานะ ใช้กับ Styler.apply(subset=["สถานะ"])"""
+
+    return [
+        f"background-color: {STATUS_BG[v]}; color: #1F2937" if v in STATUS_BG else ""
+        for v in col
+    ]
+
+
+# =========================================================
+# ข้อมูลระดับออเดอร์ (Shipnity)
+# =========================================================
+
+@st.cache_data(show_spinner=False)
+def _build_order_detail(promo_data):
+    """แปลงรายงาน Shipnity แบบบล็อกเป็นตารางรายบรรทัดสินค้า (lines) และรายออเดอร์ (orders)"""
+
+    df = pd.read_excel(io.BytesIO(promo_data), header=None)
+
+    required_max_col = max(INV_CHANNEL_COL, INV_GROUP_COL, INV_SALES_COL, INV_ORDER_COL, 14)
+
+    if df.shape[1] <= required_max_col:
+        raise ValueError(
+            f"ไฟล์ Shipnity มี {df.shape[1]} คอลัมน์ แต่ต้องมีอย่างน้อย {required_max_col + 1} คอลัมน์"
+        )
+
+    is_header = df[0].astype(str).str.strip().eq("ช่องทางการเปิดบิล")
+    block_ids = is_header.cumsum()
+    lines = []
+
+    for block_no in range(1, int(block_ids.max()) + 1):
+
+        header_idx = df.index[(block_ids == block_no) & is_header]
+
+        if len(header_idx) == 0:
+            continue
+
+        hdr_idx = header_idx[0]
+        group_name = df.iat[hdr_idx - 1, INV_GROUP_COL] if hdr_idx > 0 else ""
+        block = df[(block_ids == block_no) & ~is_header].copy()
+
+        if block.empty:
+            continue
+
+        channel = str(block.iloc[0, INV_CHANNEL_COL]).strip()
+        inv_vals = block.iloc[:, INV_NO_COL].astype(str).str.strip()
+        inv_vals = inv_vals[inv_vals.str.match(INV_NO_RE, na=False)]
+        invoice = inv_vals.iloc[0] if len(inv_vals) else None
+
+        # แถวที่มีรหัสสินค้า ผูกกับเลขออเดอร์ล่าสุดในบล็อก
+        current_order, current_head = None, None
+
+        for _, row in block.iterrows():
+
+            order_value = row.iloc[INV_ORDER_COL]
+
+            if pd.notna(order_value) and str(order_value).strip():
+                current_order = str(order_value).strip()
+                current_head = row
+
+            code_value = row.iloc[INV_CODE_COL]
+
+            if current_order is None or pd.isna(code_value) or not str(code_value).strip():
+                continue
+
+            head = current_head
+
+            lines.append({
+                "เลขที่ออเดอร์": current_order,
+                "บล็อก": block_no,
+                "ช่องทาง": channel,
+                "กลุ่ม": "" if pd.isna(group_name) else str(group_name).strip(),
+                "เลขที่ใบกำกับ": invoice,
+                "ใบสั่งขาย": head.iloc[13],
+                "ขนส่ง": head.iloc[12],
+                "ค่าส่ง": pd.to_numeric(head.iloc[8], errors="coerce"),
+                "ส่วนลด": pd.to_numeric(head.iloc[11], errors="coerce"),
+                "ยอดขาย": pd.to_numeric(head.iloc[INV_SALES_COL], errors="coerce"),
+                "รหัสสินค้า": _inv_norm_code(code_value),
+                "ชื่อรายการ": "" if pd.isna(row.iloc[INV_NAME_COL]) else str(row.iloc[INV_NAME_COL]).strip(),
+                "จำนวน": pd.to_numeric(row.iloc[INV_QTY_COL], errors="coerce"),
+                "ราคา": pd.to_numeric(row.iloc[6], errors="coerce"),
+                "มูลค่าสุทธิ": pd.to_numeric(row.iloc[7], errors="coerce"),
+            })
+
+    lines_df = pd.DataFrame(lines)
+
+    if lines_df.empty:
+        return lines_df, pd.DataFrame()
+
+    order_rows = []
+
+    for order_no, group in lines_df.groupby("เลขที่ออเดอร์", sort=False, dropna=False):
+
+        first = group.iloc[0]
+
+        items_text = group.apply(
+            lambda r: f"{r['รหัสสินค้า']} {r['ชื่อรายการ']}"
+                      + (f" ×{r['จำนวน']:g}" if pd.notna(r["จำนวน"]) else ""),
+            axis=1
+        ).tolist()
+
+        order_rows.append({
+            "เลขที่ออเดอร์": order_no,
+            "ช่องทาง": first["ช่องทาง"],
+            "เลขที่ใบกำกับ": first["เลขที่ใบกำกับ"],
+            "กลุ่ม": first["กลุ่ม"],
+            "ขนส่ง": first["ขนส่ง"],
+            "ยอดขาย": group["ยอดขาย"].dropna().iloc[0] if group["ยอดขาย"].notna().any() else 0,
+            "ค่าส่ง": first["ค่าส่ง"],
+            "ส่วนลด": first["ส่วนลด"],
+            "จำนวนรายการ": len(group),
+            "จำนวนชิ้นรวม": group["จำนวน"].sum(),
+            "รายการสินค้า": " | ".join(items_text),
+        })
+
+    return lines_df, pd.DataFrame(order_rows)
+
+
+@st.cache_data(show_spinner=False)
+def _excel_bytes(promo_data, online_data, call_data):
+    """ไฟล์ Excel สรุปผลทั้งหมด (สร้างครั้งเดียว เก็บแคช)"""
+
+    res = _invoice_compare(promo_data, online_data, call_data)
+    lines_df, orders_df = _build_order_detail(promo_data)
+
+    out = io.BytesIO()
+
+    with pd.ExcelWriter(out, engine="openpyxl") as writer:
+        res["comparison"].to_excel(writer, sheet_name="เทียบยอด CSV Shipnity", index=False)
+        res["inv_check"].to_excel(writer, sheet_name="ตรวจใบกำกับ", index=False)
+        res["items"].to_excel(writer, sheet_name="เทียบรายการสินค้า", index=False)
+        orders_df.to_excel(writer, sheet_name="รายออเดอร์", index=False)
+        lines_df.to_excel(writer, sheet_name="รายการสินค้าทั้งหมด", index=False)
+
+    return out.getvalue()
+
+
+# =========================================================
+# แท็บ 1: ภาพรวม
+# =========================================================
+
+def _carrier_summary(blocks):
+    """สรุปตามขนส่ง / วิธีชำระ"""
 
     with card("od_carrier"):
 
         section_title(
             "สรุปตามขนส่ง",
-            "แยกขนส่ง/วิธีชำระจากชื่อกลุ่มของบล็อกใน Shipnity (Kerry / DHL / Speed · COD / โอนเงิน)"
+            "แยกจากชื่อกลุ่มของบล็อกใน Shipnity (Kerry / DHL / Speed · COD / โอนเงิน)"
         )
 
         by = (
@@ -464,140 +594,58 @@ def _carrier_card(blocks):
                  ยอดขาย=("ยอด_Shipnity", "sum"))
         )
 
-        by["เฉลี่ย/ออเดอร์"] = (by["ยอดขาย"] / by["ออเดอร์"].where(by["ออเดอร์"] > 0)).round(2)
-
-        by["% ยอดขาย"] = (by["ยอดขาย"] / max(by["ยอดขาย"].sum(), 1) * 100).round(1)
-
+        by["เฉลี่ย/ออเดอร์"] = by["ยอดขาย"] / by["ออเดอร์"].where(by["ออเดอร์"] > 0)
+        by["% ยอดขาย"] = by["ยอดขาย"] / max(by["ยอดขาย"].sum(), 1) * 100
         by = by.sort_values("ยอดขาย", ascending=False).reset_index(drop=True)
 
-        cod = by[by["ชำระ"] == "COD"]
-
         stat_rows([
-            ("📦", "ออเดอร์ทั้งหมด", f"{int(by['ออเดอร์'].sum()):,}"),
-            ("💵", "ยอด COD ที่ต้องเก็บ", money(cod["ยอดขาย"].sum())),
+            ("💵", "ยอด COD ที่ต้องเก็บ", money(by.loc[by["ชำระ"] == "COD", "ยอดขาย"].sum())),
             ("🏦", "ยอดโอนเงิน", money(by.loc[by["ชำระ"] == "โอนเงิน", "ยอดขาย"].sum())),
         ])
 
-        a, b = st.columns([1, 1])
+        show = by.copy()
 
-        with a:
-
-            fig = px.bar(
-                by, x="ขนส่ง", y="ออเดอร์", color="ชำระ",
-                barmode="stack", text_auto=True, title="จำนวนออเดอร์ตามขนส่ง แยกวิธีชำระ"
-            )
-
-            fig.update_layout(height=320, margin=dict(l=10, r=10, t=40, b=10), legend_title="")
-
-            st.plotly_chart(fig, use_container_width=True, key="od_carrier_bar")
-
-        with b:
-
-            st.dataframe(
-                by.style.format({
-                    "บล็อก": "{:,.0f}", "ออเดอร์": "{:,.0f}", "ยอดขาย": "{:,.2f}",
-                    "เฉลี่ย/ออเดอร์": "{:,.2f}", "% ยอดขาย": "{:.1f}",
-                }, na_rep="-"),
-                use_container_width=True,
-                hide_index=True
-            )
-
-        st.markdown("**ขนส่ง × ช่องทาง (จำนวนออเดอร์)**")
+        for c in ["ยอดขาย", "เฉลี่ย/ออเดอร์"]:
+            show[c] = show[c].map(lambda v: "-" if pd.isna(v) else f"{v:,.2f}")
 
         st.dataframe(
-            pd.crosstab(
-                blocks["ขนส่ง"], blocks["ช่องทางการเปิดบิล"],
-                values=blocks["ออเดอร์"], aggfunc="sum", margins=True, margins_name="รวม"
-            ).fillna(0).astype(int),
-            use_container_width=True
+            show,
+            column_config={
+                "% ยอดขาย": st.column_config.ProgressColumn(
+                    "% ยอดขาย", format="%.1f%%", min_value=0, max_value=100
+                ),
+            },
+            use_container_width=True,
+            hide_index=True
         )
 
+        with st.expander("ดูแยกตามช่องทางเปิดบิล (จำนวนออเดอร์)"):
 
-def _invoice_orders_view(files, invoice_no):
-    """แสดงว่าใบกำกับที่เลือกมีออเดอร์อะไรบ้าง กี่ออเดอร์ (อ้างอิงจากไฟล์ Shipnity)"""
-
-    try:
-        lines_df, orders_df, _, _ = _build_order_detail(files["promo"]["data"])
-    except Exception as exc:  # noqa: BLE001
-        st.error(f"ดึงออเดอร์ของใบกำกับไม่ได้: {exc}")
-        return
-
-    if orders_df.empty:
-        st.info("ไม่พบออเดอร์ในไฟล์ Shipnity")
-        return
-
-    od = orders_df[orders_df["เลขที่ใบกำกับ"].astype(str) == str(invoice_no)]
-
-    if od.empty:
-        st.info(f"ใบกำกับ {invoice_no} ไม่มีออเดอร์ใน Shipnity")
-        return
-
-    ln = lines_df[lines_df["เลขที่ใบกำกับ"].astype(str) == str(invoice_no)]
-
-    a, b, c = st.columns(3)
-    a.metric("จำนวนออเดอร์", f"{od['เลขที่ออเดอร์'].nunique():,}")
-    b.metric("รายการสินค้า (บรรทัด)", f"{len(ln):,}")
-    c.metric("จำนวนชิ้นรวม", f"{od['จำนวนชิ้นรวม'].sum():,.0f}")
-
-    st.markdown(f"**ออเดอร์ในใบกำกับ {invoice_no}**")
-
-    st.dataframe(
-        od[["เลขที่ออเดอร์", "ยอดขาย", "ค่าส่ง", "ส่วนลด", "จำนวนรายการ",
-            "จำนวนชิ้นรวม", "รายการสินค้า"]]
-        .reset_index(drop=True)
-        .style.format({
-            "ยอดขาย": "{:,.2f}", "ค่าส่ง": "{:,.2f}", "ส่วนลด": "{:,.2f}",
-            "จำนวนรายการ": "{:,.0f}", "จำนวนชิ้นรวม": "{:,.0f}",
-        }, na_rep="-"),
-        use_container_width=True,
-        hide_index=True
-    )
-
-    st.markdown("**รายการสินค้ารวมของใบกำกับ (CSV vs Shipnity)**")
+            st.dataframe(
+                pd.crosstab(
+                    blocks["ขนส่ง"], blocks["ช่องทางการเปิดบิล"],
+                    values=blocks["ออเดอร์"], aggfunc="sum", margins=True, margins_name="รวม"
+                ).fillna(0).astype(int),
+                use_container_width=True
+            )
 
 
-def _tab_invoice(files):
+def _tab_overview(res):
 
-    need = {"promo": "1) Shipnity โปรโมชั่น", "online": "2) Express Online",
-            "call": "3) Express Call Center"}
-
-    missing = [name for k, name in need.items() if k not in files]
-
-    if missing:
-        st.warning("ต้องอัปโหลดไฟล์ให้ครบก่อน: " + ", ".join(missing))
-        return
-
-    try:
-        res = _invoice_compare(
-            files["promo"]["data"], files["online"]["data"], files["call"]["data"]
-        )
-    except Exception as e:  # noqa: BLE001
-        st.error(f"เทียบใบกำกับไม่ได้: {e}")
-        return
-
-    comp, inv, items = res["comparison"], res["inv_check"], res["items"]
-
-    st.caption(
-        f"CSV Online {res['csv_bills'][0]:,} บิล · Call Center {res['csv_bills'][1]:,} บิล · "
-        f"Shipnity {res['ship_blocks']:,} บล็อก · {res['ship_orders']:,} ออเดอร์"
-    )
-
-    # ---------------- 1) เปรียบเทียบรวมตามช่องทาง ----------------
+    comp = res["comparison"]
+    tot = comp[comp["ประเภทช่องทาง"] == "รวมทั้งหมด"].iloc[0]
 
     with card("od_inv_sum"):
 
         section_title(
             "เปรียบเทียบยอดขาย CSV กับ Shipnity",
-            "จำนวนบิล: CSV นับใบกำกับ, Shipnity นับบล็อก (1 บล็อก = 1 ใบกำกับ) · ผลต่าง = Shipnity − CSV"
+            "CSV นับใบกำกับ · Shipnity นับบล็อก (1 บล็อก = 1 ใบกำกับ) · ผลต่าง = Shipnity − CSV"
         )
 
-        tot = comp[comp["ประเภทช่องทาง"] == "รวมทั้งหมด"].iloc[0]
-
-        stat_rows([
-            ("🧾", "ยอดขาย CSV", money(tot["ยอดขาย CSV"])),
-            ("💰", "ยอดขาย Shipnity", money(tot["ยอดขาย Shipnity"])),
-            ("⚖️", "ผลต่างยอดขาย (Shipnity − CSV)", money(tot["ผลต่างยอดขาย"])),
-        ])
+        if abs(tot["ผลต่างยอดขาย"]) < 0.005 and tot["ผลต่างจำนวนบิล"] == 0:
+            st.success("ยอดขายและจำนวนบิลรวมตรงกัน")
+        else:
+            st.warning("พบผลต่างระหว่าง CSV กับ Shipnity — ดูว่าใบไหนไม่ตรงได้ที่แท็บ “ตรวจใบกำกับ”")
 
         st.dataframe(
             comp.style.format({
@@ -610,11 +658,14 @@ def _tab_invoice(files):
             hide_index=True
         )
 
-    # ---------------- 1.1) สรุปตามขนส่ง ----------------
+    _carrier_summary(res["carrier_blocks"])
 
-    _carrier_card(res["carrier_blocks"])
 
-    # ---------------- 2) ตรวจเลขที่ใบกำกับ ----------------
+# =========================================================
+# แท็บ 2: ตรวจใบกำกับ
+# =========================================================
+
+def _tab_check(inv):
 
     with card("od_inv_check"):
 
@@ -634,21 +685,17 @@ def _tab_invoice(files):
              "total": n, "tone": "red"},
         ])
 
-        f1, f1b, f2, f3 = st.columns([2, 2, 3, 2], vertical_alignment="bottom")
+        f1, f2, f3, f4 = st.columns([2, 2, 3, 2], vertical_alignment="bottom")
 
         with f1:
-            status = st.selectbox(
-                "สถานะ", ["ทั้งหมด"] + list(INV_STATUS_TONE), key="od_inv_status"
-            )
-
-        with f1b:
-            carrier = st.selectbox(
-                "ขนส่ง",
-                ["ทั้งหมด"] + sorted(inv["ขนส่ง"].dropna().unique()),
-                key="od_inv_carrier"
-            )
+            status = st.selectbox("สถานะ", ["ทั้งหมด"] + list(INV_STATUS_TONE), key="od_inv_status")
 
         with f2:
+            carrier = st.selectbox(
+                "ขนส่ง", ["ทั้งหมด"] + sorted(inv["ขนส่ง"].dropna().unique()), key="od_inv_carrier"
+            )
+
+        with f3:
             q = st.text_input(
                 "🔍 ค้นหาเลขที่ใบกำกับ", placeholder="เช่น WG6900965", key="od_inv_q"
             ).strip().upper()
@@ -664,15 +711,19 @@ def _tab_invoice(files):
         if q:
             view = view[view["เลขที่ใบกำกับ"].astype(str).str.upper().str.contains(q, regex=False)]
 
-        with f3:
+        with f4:
             st.download_button(
-                "⬇️ ดาวน์โหลด CSV",
+                "⬇️ ดาวน์โหลดตารางนี้ (CSV)",
                 data=view.to_csv(index=False).encode("utf-8-sig"),
                 file_name="invoice_check.csv",
                 mime="text/csv",
                 use_container_width=True,
                 key="od_inv_dl"
             )
+
+        if view.empty:
+            st.info("ไม่พบใบกำกับตามตัวกรองนี้ ลองเปลี่ยนสถานะหรือล้างช่องค้นหา")
+            return
 
         st.caption(f"พบ {len(view):,} ใบกำกับ")
 
@@ -697,7 +748,53 @@ def _tab_invoice(files):
 
         page_controls("od_inv_tbl", len(view), start)
 
-    # ---------------- 3) รหัสสินค้า / ชื่อรายการ ของใบกำกับ ----------------
+
+# =========================================================
+# แท็บ 3: รายการสินค้ารายใบกำกับ
+# =========================================================
+
+def _invoice_orders_view(orders_df, lines_df, invoice_no):
+    """ใบกำกับที่เลือกมีออเดอร์อะไรบ้าง กี่ออเดอร์ กี่ชิ้น (จาก Shipnity)"""
+
+    od = orders_df[orders_df["เลขที่ใบกำกับ"].astype(str) == str(invoice_no)] \
+        if not orders_df.empty else orders_df
+
+    if od.empty:
+        st.info(f"ใบกำกับ {invoice_no} ไม่มีออเดอร์ใน Shipnity")
+        return
+
+    ln = lines_df[lines_df["เลขที่ใบกำกับ"].astype(str) == str(invoice_no)]
+
+    a, b, c = st.columns(3)
+    a.metric("จำนวนออเดอร์", f"{od['เลขที่ออเดอร์'].nunique():,}")
+    b.metric("รายการสินค้า (บรรทัด)", f"{len(ln):,}")
+    c.metric("จำนวนชิ้นรวม", f"{od['จำนวนชิ้นรวม'].sum():,.0f}")
+
+    with st.expander(f"ออเดอร์ในใบกำกับ {invoice_no}", expanded=True):
+
+        st.dataframe(
+            od[["เลขที่ออเดอร์", "ยอดขาย", "ค่าส่ง", "ส่วนลด", "จำนวนรายการ",
+                "จำนวนชิ้นรวม", "รายการสินค้า"]]
+            .reset_index(drop=True)
+            .style.format({
+                "ยอดขาย": "{:,.2f}", "ค่าส่ง": "{:,.2f}", "ส่วนลด": "{:,.2f}",
+                "จำนวนรายการ": "{:,.0f}", "จำนวนชิ้นรวม": "{:,.0f}",
+            }, na_rep="-"),
+            use_container_width=True,
+            hide_index=True
+        )
+
+
+def _tab_items(res, orders_df, lines_df):
+
+    inv, items = res["inv_check"], res["items"]
+
+    bad = set(inv.loc[inv["สถานะ"] != "ตรงกัน", "เลขที่ใบกำกับ"]) | set(
+        items.loc[items["สถานะ"] != "ตรงกัน", "เลขที่ใบกำกับ"]
+    )
+
+    all_inv = sorted(set(inv["เลขที่ใบกำกับ"]) | set(items["เลขที่ใบกำกับ"]))
+    ordered = [i for i in all_inv if i in bad] + [i for i in all_inv if i not in bad]
 
     with card("od_inv_items"):
 
@@ -705,12 +802,6 @@ def _tab_invoice(files):
             "รหัสสินค้า / ชื่อรายการ รายใบกำกับ",
             "เทียบจำนวน CSV กับ Shipnity ตามรหัสสินค้า (ไม่รวมค่าจัดส่ง รหัส " + INV_SHIPPING_CODE + ")"
         )
-
-        bad = set(inv.loc[inv["สถานะ"] != "ตรงกัน", "เลขที่ใบกำกับ"]) | set(
-            items.loc[items["สถานะ"] != "ตรงกัน", "เลขที่ใบกำกับ"]
-        )
-
-        all_inv = sorted(set(inv["เลขที่ใบกำกับ"]) | set(items["เลขที่ใบกำกับ"]))
 
         mode = st.radio(
             "แสดง",
@@ -721,50 +812,130 @@ def _tab_invoice(files):
 
         if mode == "เลือกดูทีละใบกำกับ":
 
-            pick = st.selectbox("เลขที่ใบกำกับ", all_inv, key="od_inv_pick")
+            if not ordered:
+                st.info("ไม่มีใบกำกับให้เลือก")
+                return
 
-            _invoice_orders_view(files, pick)
+            pick = st.selectbox(
+                "เลขที่ใบกำกับ (⚠️ = ไม่ตรง แสดงก่อน)",
+                ordered,
+                format_func=lambda i: f"⚠️ {i}" if i in bad else f"✅ {i}",
+                key="od_inv_pick"
+            )
 
-            detail = items[items["เลขที่ใบกำกับ"] == pick]
+            _invoice_orders_view(orders_df, lines_df, pick)
+
+            detail = items[items["เลขที่ใบกำกับ"] == pick].drop(columns="เลขที่ใบกำกับ")
+
+            if detail.empty:
+                st.info("ไม่มีรายการสินค้าให้เทียบในใบกำกับนี้")
+                return
+
+            st.markdown("**เทียบรายการสินค้า**")
+
+            sort_cols = ["รหัสสินค้า"]
 
         else:
 
-            detail = items[
-                items["เลขที่ใบกำกับ"].isin(bad) & (items["สถานะ"] != "ตรงกัน")
-            ]
+            detail = items[items["เลขที่ใบกำกับ"].isin(bad) & (items["สถานะ"] != "ตรงกัน")]
 
             if detail.empty:
                 st.success("ทุกใบกำกับตรงกัน: ยอดเท่ากัน และรหัสสินค้า/จำนวนตรงกันทุกรายการ")
+                return
 
-        if not detail.empty:
+            st.caption(f"พบ {len(detail):,} รายการที่จำนวนไม่ตรง ใน {detail['เลขที่ใบกำกับ'].nunique():,} ใบกำกับ")
 
-            st.dataframe(
-                detail.sort_values(["เลขที่ใบกำกับ", "รหัสสินค้า"]).reset_index(drop=True)
-                .style.format({
-                    "จำนวน CSV": "{:,.0f}", "จำนวน Shipnity": "{:,.0f}",
-                    "ผลต่างจำนวน": "{:+,.0f}", "เงิน CSV": "{:,.2f}", "เงิน Shipnity": "{:,.2f}",
-                }, na_rep="-"),
-                use_container_width=True,
-                hide_index=True
-            )
-
-    # ---------------- 4) จับคู่บล็อก ----------------
-
-    with st.expander("🔗 จับคู่บล็อก Shipnity กับใบกำกับ CSV ด้วยยอดเงิน"):
-
-        st.caption(
-            "ลำดับบล็อกกับลำดับใบกำกับไม่ตรงกัน จึงจับคู่ด้วยยอดรวมของบล็อก"
-        )
+            sort_cols = ["เลขที่ใบกำกับ", "รหัสสินค้า"]
 
         st.dataframe(
-            res["block_check"].style.format(
-                {"ยอด_Shipnity": "{:,.2f}", "ยอด_CSV": "{:,.2f}"}, na_rep="-"
+            detail.sort_values(sort_cols).reset_index(drop=True)
+            .style.format({
+                "จำนวน CSV": "{:,.0f}", "จำนวน Shipnity": "{:,.0f}",
+                "ผลต่างจำนวน": "{:+,.0f}", "เงิน CSV": "{:,.2f}", "เงิน Shipnity": "{:,.2f}",
+            }, na_rep="-")
+            .apply(_paint_status, subset=["สถานะ"]),
+            use_container_width=True,
+            hide_index=True
+        )
+
+
+# =========================================================
+# แท็บ 4: ค้นหาออเดอร์
+# =========================================================
+
+def _tab_orders(res, orders_df, lines_df):
+
+    with card("od_order_detail"):
+
+        section_title(
+            "ค้นหาออเดอร์",
+            "พิมพ์เลขออเดอร์เต็มหรือบางส่วน คั่นหลายเลขด้วยช่องว่างหรือจุลภาค"
+        )
+
+        if orders_df.empty:
+            st.warning("ไม่พบรายการสินค้าที่มีรหัสสินค้าและเลขออเดอร์ในไฟล์ Shipnity")
+            return
+
+        f1, f2 = st.columns([4, 3], vertical_alignment="bottom")
+
+        with f1:
+            query = st.text_input(
+                "เลขที่ออเดอร์", placeholder="เช่น 261016-151 หรือ 261016-151, 261016-152",
+                key="od_order_search"
+            ).strip()
+
+        with f2:
+            show_bad = st.toggle("เฉพาะออเดอร์ในใบกำกับที่ไม่ตรง", key="od_order_suspect")
+
+        view = orders_df
+
+        if query:
+            terms = [x for x in re.split(r"[\s,]+", query) if x]
+            mask = pd.Series(False, index=view.index)
+
+            for term in terms:
+                mask |= view["เลขที่ออเดอร์"].astype(str).str.contains(
+                    re.escape(term), case=False, na=False
+                )
+
+            view = view[mask]
+
+        if show_bad:
+            inv, item = res["inv_check"], res["items"]
+            bad = set(inv.loc[inv["สถานะ"] != "ตรงกัน", "เลขที่ใบกำกับ"].dropna())
+            bad |= set(item.loc[item["สถานะ"] != "ตรงกัน", "เลขที่ใบกำกับ"].dropna())
+            view = view[view["เลขที่ใบกำกับ"].isin(bad)]
+
+        if view.empty:
+            st.info("ไม่พบออเดอร์ที่ตรงกับคำค้น ลองพิมพ์เลขบางส่วนหรือปิดตัวกรอง")
+            return
+
+        st.caption(f"แสดง {len(view):,} จาก {len(orders_df):,} ออเดอร์")
+
+        st.dataframe(
+            view.reset_index(drop=True).style.format(
+                {"ยอดขาย": "{:,.2f}", "ค่าส่ง": "{:,.2f}", "ส่วนลด": "{:,.2f}",
+                 "จำนวนรายการ": "{:,.0f}", "จำนวนชิ้นรวม": "{:,.0f}"}, na_rep="-"
             ),
             use_container_width=True,
             hide_index=True
         )
 
-        st.write(res["block_check"]["สถานะ"].value_counts().rename_axis("สถานะ").reset_index(name="จำนวน"))
+        selected = st.selectbox(
+            "ดูรายการสินค้ารายบรรทัดของออเดอร์",
+            view["เลขที่ออเดอร์"].astype(str).tolist(),
+            key="od_order_pick"
+        )
+
+        detail = lines_df[lines_df["เลขที่ออเดอร์"].astype(str) == selected]
+
+        st.dataframe(
+            detail[["รหัสสินค้า", "ชื่อรายการ", "จำนวน", "ราคา", "มูลค่าสุทธิ"]]
+            .reset_index(drop=True)
+            .style.format({"จำนวน": "{:,.0f}", "ราคา": "{:,.2f}", "มูลค่าสุทธิ": "{:,.2f}"}, na_rep="-"),
+            use_container_width=True,
+            hide_index=True
+        )
 
 
 # =========================================================
@@ -772,7 +943,7 @@ def _tab_invoice(files):
 # =========================================================
 
 def _upload_block():
-    """3 ช่องอัปโหลด + ปุ่มประมวลผล"""
+    """3 ช่องอัปโหลด + ปุ่มประมวลผล (พับเก็บอัตโนมัติหลังประมวลผลแล้ว)"""
 
     files = st.session_state.setdefault(FILES_KEY, {})
     counts = st.session_state.setdefault(COUNTER_KEY, {})
@@ -788,221 +959,29 @@ def _upload_block():
             counts[sid] = n + 1
             st.rerun()
 
-    r1 = st.columns([3, 3, 3, 2], vertical_alignment="bottom")
+    with st.expander("📁 อัปโหลดไฟล์", expanded=not st.session_state.get(RAN_KEY, False)):
 
-    with r1[0]:
-        slot("promo", "1) Shipnity โปรโมชั่น (.xlsx)", ["xlsx", "xls"])
+        r1 = st.columns([3, 3, 3, 2], vertical_alignment="bottom")
 
-    with r1[1]:
-        slot("online", "2) Express Online (.csv)", ["csv", "txt"])
+        with r1[0]:
+            slot("promo", "1) Shipnity โปรโมชั่น (.xlsx)", ["xlsx", "xls"])
 
-    with r1[2]:
-        slot("call", "3) Express Call Center (.csv)", ["csv", "txt"])
+        with r1[1]:
+            slot("online", "2) Express Online (.csv)", ["csv", "txt"])
 
-    with r1[3]:
-        run = st.button(
-            "🚀 ประมวลผล",
-            type="primary",
-            use_container_width=True,
-            key="od_run"
-        )
+        with r1[2]:
+            slot("call", "3) Express Call Center (.csv)", ["csv", "txt"])
 
-    file_chips(
-        [
-            ("โปรโมชั่น", "promo" in files),
-            ("Express Online", "online" in files),
-            ("Express Call Center", "call" in files),
-        ]
-    )
+        with r1[3]:
+            run = st.button("🚀 ประมวลผล", type="primary", use_container_width=True, key="od_run")
+
+    file_chips([
+        ("โปรโมชั่น", "promo" in files),
+        ("Express Online", "online" in files),
+        ("Express Call Center", "call" in files),
+    ])
 
     return files, run
-
-
-
-
-# =========================================================
-# รายละเอียดออเดอร์ Shipnity (เพิ่มเติมจากโน้ตบุ๊ก Python)
-# =========================================================
-
-@st.cache_data(show_spinner=False)
-def _build_order_detail(promo_data):
-    """แปลงรายงาน Shipnity แบบบล็อกให้เป็นตารางระดับออเดอร์และระดับรายการสินค้า"""
-    df = pd.read_excel(io.BytesIO(promo_data), header=None)
-    required_max_col = max(INV_CHANNEL_COL, INV_GROUP_COL, INV_SALES_COL, INV_ORDER_COL, 14)
-    if df.shape[1] <= required_max_col:
-        raise ValueError(f"ไฟล์ Shipnity มี {df.shape[1]} คอลัมน์ แต่ต้องมีอย่างน้อย {required_max_col + 1} คอลัมน์")
-
-    is_header = df[0].astype(str).str.strip().eq("ช่องทางการเปิดบิล")
-    block_ids = is_header.cumsum()
-    lines = []
-
-    for block_no in range(1, int(block_ids.max()) + 1):
-        header_idx = df.index[(block_ids == block_no) & is_header]
-        if len(header_idx) == 0:
-            continue
-        hdr_idx = header_idx[0]
-        group_name = df.iat[hdr_idx - 1, INV_GROUP_COL] if hdr_idx > 0 else ""
-        block = df[(block_ids == block_no) & ~is_header].copy()
-        if block.empty:
-            continue
-        channel = str(block.iloc[0, INV_CHANNEL_COL]).strip()
-        inv_vals = block.iloc[:, INV_NO_COL].astype(str).str.strip()
-        inv_vals = inv_vals[inv_vals.str.match(INV_NO_RE, na=False)]
-        invoice = inv_vals.iloc[0] if len(inv_vals) else None
-
-        # ใช้แถวที่มีรหัสสินค้า แล้วกำหนดออเดอร์จากเลขออเดอร์ล่าสุดในบล็อก
-        current_order = None
-        current_head = None
-        for _, row in block.iterrows():
-            order_value = row.iloc[INV_ORDER_COL]
-            if pd.notna(order_value) and str(order_value).strip():
-                current_order = str(order_value).strip()
-                current_head = row
-            code_value = row.iloc[INV_CODE_COL]
-            if current_order is None or pd.isna(code_value) or not str(code_value).strip():
-                continue
-            lines.append({
-                "เลขที่ออเดอร์": current_order,
-                "บล็อก": block_no,
-                "ช่องทาง": channel,
-                "กลุ่ม": "" if pd.isna(group_name) else str(group_name).strip(),
-                "เลขที่ใบกำกับ": invoice,
-                "ใบสั่งขาย": current_head.iloc[13] if current_head is not None else None,
-                "ขนส่ง": current_head.iloc[12] if current_head is not None else None,
-                "ค่าส่ง": pd.to_numeric(current_head.iloc[8], errors="coerce") if current_head is not None else 0,
-                "ส่วนลด": pd.to_numeric(current_head.iloc[11], errors="coerce") if current_head is not None else 0,
-                "ยอดขาย": pd.to_numeric(current_head.iloc[INV_SALES_COL], errors="coerce") if current_head is not None else 0,
-                "รหัสสินค้า": _inv_norm_code(code_value),
-                "ชื่อรายการ": "" if pd.isna(row.iloc[INV_NAME_COL]) else str(row.iloc[INV_NAME_COL]).strip(),
-                "จำนวน": pd.to_numeric(row.iloc[INV_QTY_COL], errors="coerce"),
-                "ราคา": pd.to_numeric(row.iloc[6], errors="coerce"),
-                "มูลค่าสุทธิ": pd.to_numeric(row.iloc[7], errors="coerce"),
-            })
-
-    lines_df = pd.DataFrame(lines)
-    if lines_df.empty:
-        return lines_df, pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
-
-    order_rows = []
-    for order_no, group in lines_df.groupby("เลขที่ออเดอร์", sort=False, dropna=False):
-        first = group.iloc[0]
-        items_text = group.apply(
-            lambda r: f"{r['รหัสสินค้า']} {r['ชื่อรายการ']}" +
-                      (f" ×{r['จำนวน']:g}" if pd.notna(r['จำนวน']) else ""),
-            axis=1
-        ).tolist()
-        order_rows.append({
-            "เลขที่ออเดอร์": order_no,
-            "ช่องทาง": first["ช่องทาง"],
-            "เลขที่ใบกำกับ": first["เลขที่ใบกำกับ"],
-            "กลุ่ม": first["กลุ่ม"],
-            "ขนส่ง": first["ขนส่ง"],
-            "ยอดขาย": group["ยอดขาย"].dropna().iloc[0] if group["ยอดขาย"].notna().any() else 0,
-            "ค่าส่ง": first["ค่าส่ง"],
-            "ส่วนลด": first["ส่วนลด"],
-            "จำนวนรายการ": len(group),
-            "รหัสสินค้าไม่ซ้ำ": group["รหัสสินค้า"].nunique(),
-            "จำนวนชิ้นรวม": group["จำนวน"].sum(),
-            "รายการสินค้า": " | ".join(items_text),
-        })
-    orders_df = pd.DataFrame(order_rows)
-
-    by_channel = (orders_df.groupby("ช่องทาง", dropna=False)
-        .agg(จำนวนออเดอร์=("เลขที่ออเดอร์", "nunique"),
-             จำนวนบิล=("เลขที่ใบกำกับ", "nunique"),
-             รายการสินค้ารวม=("จำนวนรายการ", "sum"),
-             ยอดขายรวม=("ยอดขาย", "sum")).reset_index())
-
-    by_invoice = (orders_df.groupby(["ช่องทาง", "เลขที่ใบกำกับ", "กลุ่ม"], dropna=False)
-        .agg(จำนวนออเดอร์=("เลขที่ออเดอร์", "nunique"),
-             รายการสินค้ารวม=("จำนวนรายการ", "sum"),
-             ยอดขายรวม=("ยอดขาย", "sum")).reset_index())
-
-    return lines_df, orders_df, by_channel, by_invoice
-
-
-def _render_order_details(files, invoice_result):
-    """แสดงตารางจาก workflow Python: สรุปช่องทาง/ใบกำกับ, รายออเดอร์, ค้นหา และ Excel"""
-    with card("od_order_detail"):
-        section_title(
-            "รายละเอียดออเดอร์และรายการสินค้า",
-            "เพิ่มระบบจาก Python notebook: สรุปตามช่องทาง/ใบกำกับ ค้นหาเลขออเดอร์ และส่งออก Excel"
-        )
-        try:
-            lines_df, orders_df, by_channel, by_invoice = _build_order_detail(files["promo"]["data"])
-        except Exception as exc:
-            st.error(f"สร้างรายละเอียดออเดอร์ไม่ได้: {exc}")
-            return
-
-        if orders_df.empty:
-            st.warning("ไม่พบรายการสินค้าที่มีรหัสสินค้าและเลขออเดอร์ในไฟล์ Shipnity")
-            return
-
-        a, b, c = st.columns(3)
-        a.metric("ออเดอร์ทั้งหมด", f"{orders_df['เลขที่ออเดอร์'].nunique():,}")
-        b.metric("รายการสินค้าทั้งหมด", f"{len(lines_df):,}")
-        c.metric("ยอดขายรวม", money(orders_df.drop_duplicates("เลขที่ออเดอร์")["ยอดขาย"].sum()))
-
-        with st.expander("สรุปตามช่องทาง", expanded=True):
-            st.dataframe(by_channel.style.format({"ยอดขายรวม": "{:,.2f}"}), use_container_width=True, hide_index=True)
-        with st.expander("สรุปตามใบกำกับ"):
-            st.dataframe(by_invoice.style.format({"ยอดขายรวม": "{:,.2f}"}), use_container_width=True, hide_index=True)
-
-        st.markdown("**ค้นหาเลขที่ออเดอร์**")
-        query = st.text_input(
-            "พิมพ์เลขออเดอร์เต็มหรือบางส่วน (คั่นหลายเลขด้วยช่องว่างหรือจุลภาค)",
-            placeholder="เช่น 261016-151 หรือ 261016-151, 261016-152",
-            key="od_order_search"
-        ).strip()
-        show_suspect = st.checkbox("แสดงเฉพาะออเดอร์ที่เกี่ยวกับใบกำกับ/จำนวนสินค้าไม่ตรง", key="od_order_suspect")
-
-        view = orders_df.copy()
-        if query:
-            terms = [x for x in re.split(r"[\\s,]+", query) if x]
-            mask = pd.Series(False, index=view.index)
-            for term in terms:
-                mask |= view["เลขที่ออเดอร์"].astype(str).str.contains(re.escape(term), case=False, na=False)
-            view = view[mask]
-
-        if show_suspect:
-            inv = invoice_result["inv_check"]
-            item = invoice_result["items"]
-            bad_invoices = set(inv.loc[inv["สถานะ"] != "ตรงกัน", "เลขที่ใบกำกับ"].dropna())
-            bad_invoices |= set(item.loc[item["สถานะ"] != "ตรงกัน", "เลขที่ใบกำกับ"].dropna())
-            view = view[view["เลขที่ใบกำกับ"].isin(bad_invoices)]
-
-        st.caption(f"แสดง {len(view):,} จาก {len(orders_df):,} ออเดอร์")
-        st.dataframe(
-            view.style.format({"ยอดขาย": "{:,.2f}", "ค่าส่ง": "{:,.2f}", "ส่วนลด": "{:,.2f}"}),
-            use_container_width=True, hide_index=True
-        )
-
-        if not view.empty:
-            selected = st.selectbox("เลือกออเดอร์เพื่อดูรายการสินค้ารายบรรทัด", view["เลขที่ออเดอร์"].astype(str).tolist(), key="od_order_pick")
-            detail = lines_df[lines_df["เลขที่ออเดอร์"].astype(str) == selected].copy()
-            st.dataframe(
-                detail[["เลขที่ออเดอร์", "ช่องทาง", "เลขที่ใบกำกับ", "รหัสสินค้า", "ชื่อรายการ", "จำนวน", "ราคา", "มูลค่าสุทธิ"]]
-                    .style.format({"จำนวน": "{:,.2f}", "ราคา": "{:,.2f}", "มูลค่าสุทธิ": "{:,.2f}"}),
-                use_container_width=True, hide_index=True
-            )
-
-        # ส่งออก workbook โดยไม่ต้องพึ่ง Google Colab files.download
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine="openpyxl") as writer:
-            by_channel.to_excel(writer, sheet_name="สรุปตามช่องทาง", index=False)
-            by_invoice.to_excel(writer, sheet_name="สรุปตามใบกำกับ", index=False)
-            orders_df.to_excel(writer, sheet_name="รายออเดอร์", index=False)
-            lines_df.to_excel(writer, sheet_name="รายการสินค้าทั้งหมด", index=False)
-            invoice_result["comparison"].to_excel(writer, sheet_name="เทียบยอด CSV Shipnity", index=False)
-            invoice_result["inv_check"].to_excel(writer, sheet_name="ตรวจใบกำกับ", index=False)
-            invoice_result["items"].to_excel(writer, sheet_name="เทียบรายการสินค้า", index=False)
-        st.download_button(
-            "⬇️ ดาวน์โหลดผลตรวจทั้งหมดเป็น Excel",
-            data=output.getvalue(),
-            file_name="orders_summary.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            key="od_order_excel"
-        )
 
 
 # =========================================================
@@ -1033,14 +1012,47 @@ def render_order_detail_page():
         st.info("อัปโหลดไฟล์ทั้ง 3 แล้วกด 🚀 ประมวลผล")
         return
 
-    # แสดงส่วนเปรียบเทียบใบกำกับเดิมก่อน
-    _tab_invoice(files)
+    if not all(k in files for k in ("promo", "online", "call")):
+        st.warning("ไฟล์ไม่ครบ อัปโหลดให้ครบทั้ง 3 ไฟล์แล้วกด 🚀 ประมวลผลอีกครั้ง")
+        return
 
-    # แสดงฟีเจอร์ค้นหาเลขที่ออเดอร์ต่อท้ายหน้าเดียวกัน
+    promo, online, call = files["promo"]["data"], files["online"]["data"], files["call"]["data"]
+
     try:
-        invoice_result = _invoice_compare(
-            files["promo"]["data"], files["online"]["data"], files["call"]["data"]
+        with st.spinner("กำลังเทียบข้อมูล..."):
+            res = _invoice_compare(promo, online, call)
+    except Exception as e:  # noqa: BLE001
+        st.error(f"เทียบใบกำกับไม่ได้: {e} — ตรวจว่าเลือกไฟล์ถูกช่องและเป็นรายงานรุ่นเดิม")
+        return
+
+    try:
+        lines_df, orders_df = _build_order_detail(promo)
+    except Exception as e:  # noqa: BLE001
+        st.error(f"สร้างรายละเอียดออเดอร์ไม่ได้: {e}")
+        lines_df, orders_df = pd.DataFrame(), pd.DataFrame()
+
+    _, dl = st.columns([5, 2])
+
+    with dl:
+        st.download_button(
+            "⬇️ ดาวน์โหลดผลตรวจทั้งหมด (Excel)",
+            data=_excel_bytes(promo, online, call),
+            file_name="orders_summary.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+            key="od_order_excel"
         )
-        _render_order_details(files, invoice_result)
-    except Exception as exc:  # noqa: BLE001
-        st.error(f"เปิดส่วนค้นหาเลขที่ออเดอร์ไม่ได้: {exc}")
+
+    t1, t2, t3, t4 = st.tabs(["📊 ภาพรวม", "✅ ตรวจใบกำกับ", "🧩 รายการสินค้า", "🔎 ค้นหาออเดอร์"])
+
+    with t1:
+        _tab_overview(res)
+
+    with t2:
+        _tab_check(res["inv_check"])
+
+    with t3:
+        _tab_items(res, orders_df, lines_df)
+
+    with t4:
+        _tab_orders(res, orders_df, lines_df)

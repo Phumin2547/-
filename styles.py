@@ -37,21 +37,85 @@ h1, h2, h3 { letter-spacing: -0.02em; }
     background: linear-gradient(180deg, #0b1f4d 0%, #0e2a66 100%);
 }
 
+/* ดึงหัวข้อ Order Reconciliation ขึ้นชิดบน
+   (Streamlit เว้นพื้นที่ด้านบนไว้เยอะให้ปุ่มพับ sidebar) */
+[data-testid="stSidebarHeader"] {
+    height: 2.4rem !important;
+    min-height: 0 !important;
+    padding: .6rem .9rem 0 !important;
+    margin-bottom: 0 !important;
+}
+
+/* ปุ่มพับเมนู « เป็นสีขาว (ให้เห็นชัดบนพื้นกรมท่า) */
+[data-testid="stSidebarCollapseButton"] button,
+[data-testid="stSidebarCollapseButton"] button *,
+[data-testid="stSidebarCollapseButton"] [data-testid="stIconMaterial"],
+[data-testid="stSidebarHeader"] button,
+[data-testid="stSidebarHeader"] button * {
+    color: #ffffff !important;
+    fill: #ffffff !important;
+    stroke: #ffffff !important;
+}
+
+/* แสดงตลอด (Streamlit ซ่อนไว้จนกว่าจะเอาเมาส์ไปวางที่ sidebar) */
+[data-testid="stSidebarCollapseButton"],
+[data-testid="stSidebarCollapseButton"] button,
+[data-testid="stSidebarHeader"] button {
+    opacity: 1 !important;
+    visibility: visible !important;
+    display: inline-flex !important;
+}
+
+[data-testid="stSidebarCollapseButton"] button:hover,
+[data-testid="stSidebarHeader"] button:hover {
+    background: rgba(255,255,255,.12) !important;
+}
+
+[data-testid="stSidebarUserContent"],
+[data-testid="stSidebar"] .block-container {
+    padding: .2rem 1rem 1.2rem !important;
+    max-width: none;
+}
+
+/* แถวเมนูเรียงชิดกันเท่า ๆ กัน */
+[data-testid="stSidebar"] [data-testid="stVerticalBlock"] {
+    gap: .4rem;
+}
+
+[data-testid="stSidebar"] .stButton {
+    width: 100%;
+}
+
+/* แต่ละเมนู = 1 แถว ความสูงเท่ากัน ข้อความชิดซ้าย */
 [data-testid="stSidebar"] .stButton > button {
+    width: 100%;
+    min-height: 2.9rem;
+    display: flex;
+    align-items: center;
     justify-content: flex-start;
     text-align: left;
     border: 0;
     border-radius: 12px;
-    padding: .7rem .9rem;
+    padding: .55rem .95rem;
     background: transparent;
     color: #cbd5e1;
     font-weight: 500;
     box-shadow: none;
 }
 
+[data-testid="stSidebar"] .stButton > button > div,
+[data-testid="stSidebar"] .stButton > button [data-testid="stMarkdownContainer"] {
+    width: 100%;
+    display: flex;
+    justify-content: flex-start;
+}
+
 [data-testid="stSidebar"] .stButton > button p {
     color: inherit !important;
     font-size: 1rem;
+    margin: 0;
+    width: 100%;
+    text-align: left !important;
 }
 
 [data-testid="stSidebar"] .stButton > button:hover {
@@ -65,11 +129,14 @@ h1, h2, h3 { letter-spacing: -0.02em; }
     color: #fff;
 }
 
+/* หัวข้อแอป: โลโก้ + ชื่อ อยู่แถวบนสุด มีเส้นคั่นก่อนเมนู */
 .brand {
     display: flex;
     align-items: center;
     gap: 12px;
-    padding: 6px 4px 20px;
+    padding: 2px 6px 16px;
+    margin-bottom: 6px;
+    border-bottom: 1px solid rgba(255,255,255,.14);
 }
 
 .brand-logo {
@@ -80,11 +147,11 @@ h1, h2, h3 { letter-spacing: -0.02em; }
     color: #fff; font-size: 1.4rem;
 }
 
-.brand-title { color: #fff; font-weight: 700; font-size: 1.02rem; line-height: 1.2; }
+.brand-title { color: #fff; font-weight: 700; font-size: 1.12rem; line-height: 1.2; }
 .brand-sub   { color: #94a3b8; font-size: .78rem; }
 
 .side-status {
-    margin-top: 2.2rem;
+    margin-top: 1.2rem;
     padding: 12px 14px;
     border: 1px solid rgba(255,255,255,.16);
     border-radius: 12px;

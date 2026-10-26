@@ -9,6 +9,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+from guide_page import render_guide_page  # noqa: E402
 from order_cn_page import render_order_cn_page  # noqa: E402
 from styles import apply_styles  # noqa: E402
 from order_detail_page import render_order_detail_page  # noqa: E402
@@ -22,6 +23,7 @@ FEATURES = [
     "📋 ตรวจสอบ Order & CN",
     "🗂️ ไฟล์งาน",
     "🔎 รายละเอียดออเดอร์",
+    "📖 คู่มือการใช้งาน",
 ]
 
 if st.session_state.get("feature") not in FEATURES:
@@ -54,3 +56,6 @@ if st.session_state.feature == FEATURES[1]:
 
 if st.session_state.feature == FEATURES[2]:
     render_order_detail_page()
+
+if st.session_state.feature == FEATURES[3]:
+    render_guide_page()

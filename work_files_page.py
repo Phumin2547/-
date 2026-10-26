@@ -4,6 +4,7 @@
     📊 ช่องทาง & ประเภท  ออเดอร์แต่ละช่องทาง แยกประเภท (Call Center / Online Marketing)
     🚚 ขนส่ง             แต่ละช่องทาง/ประเภท ใช้ขนส่งอะไร
     🧾 ออเดอร์ / รหัส    เลขที่ออเดอร์ + รหัส (จากหมายเหตุ) + SET / จำนวน
+    👥 ลูกค้า & พื้นที่  รหัสลูกค้าที่ซื้อเยอะ + จังหวัดที่ซื้อเยอะ
     💡 Insight           ตรวจข้อมูลเชิงลึก หาจุดที่ต้องตรวจสอบ
 """
 
@@ -35,6 +36,8 @@ COL_NAME = "ชื่อ (ลูกค้า)"
 COL_PHONE = "เบอร์โทร (ลูกค้า)"
 COL_DISC = "ส่วนลดจาก Marketplace"
 COL_CREATED = "วันที่สร้าง"
+COL_ADDR = "ที่อยู่ (ลูกค้า)"
+COL_CANCEL = "ยกเลิกออเดอร์แล้ว"
 REQUIRED = [COL_ORDER, COL_SALES, COL_CH, COL_SHIP]
 
 MARKET = ["Shopee", "TikTok", "Lazada"]
@@ -42,6 +45,23 @@ PAID_BANKS = ["กสิกร", "กรุงเทพ", "กรุงไทย
 
 NOTE_RE = re.compile(r"^\s*(\d{1,2})/(\d{1,2})/(\d{2,4})\s*,\s*([^,]*),\s*([^,]*)")
 PO_RE = re.compile(r"PO\.[A-Za-z0-9]+")
+
+PROVINCES = (
+    "กระบี่ กรุงเทพมหานคร กาญจนบุรี กาฬสินธุ์ กำแพงเพชร ขอนแก่น จันทบุรี "
+    "ฉะเชิงเทรา ชลบุรี ชัยนาท ชัยภูมิ ชุมพร เชียงราย เชียงใหม่ ตรัง ตราด ตาก "
+    "นครนายก นครปฐม นครพนม นครราชสีมา นครศรีธรรมราช นครสวรรค์ นนทบุรี "
+    "นราธิวาส น่าน บึงกาฬ บุรีรัมย์ ปทุมธานี ประจวบคีรีขันธ์ ปราจีนบุรี "
+    "ปัตตานี พระนครศรีอยุธยา พะเยา พังงา พัทลุง พิจิตร พิษณุโลก เพชรบุรี "
+    "เพชรบูรณ์ แพร่ ภูเก็ต มหาสารคาม มุกดาหาร แม่ฮ่องสอน ยโสธร ยะลา ร้อยเอ็ด "
+    "ระนอง ระยอง ราชบุรี ลพบุรี ลำปาง ลำพูน เลย ศรีสะเกษ สกลนคร สงขลา สตูล "
+    "สมุทรปราการ สมุทรสงคราม สมุทรสาคร สระแก้ว สระบุรี สิงห์บุรี สุโขทัย "
+    "สุพรรณบุรี สุราษฎร์ธานี สุรินทร์ หนองคาย หนองบัวลำภู อ่างทอง อำนาจเจริญ "
+    "อุดรธานี อุตรดิตถ์ อุทัยธานี อุบลราชธานี"
+).split()
+
+PROV_BY_LEN = sorted(PROVINCES, key=len, reverse=True)
+PROV_TAG_RE = re.compile(r"(?:จังหวัด|จ\.|จ\s)\s*([ก-๙]+)")
+BKK_RE = re.compile(r"กรุงเทพ|กทม|bangkok|แขวง", re.I)
 
 
 # =========================================================
@@ -72,6 +92,35 @@ def _page_name(s):
     s = str(s)
 
     return s.split(":", 1)[1].strip() if ":" in s else ""
+
+
+def _province(addr):
+    """ดึงชื่อจังหวัดจากที่อยู่ (ไม่พบ = "ไม่ระบุที่อยู่")"""
+
+    if pd.isna(addr):
+        return "ไม่ระบุที่อยู่"
+
+    s = str(addr).replace("_x000d_", " ")
+
+    # 1) ตามหลัง "จังหวัด / จ." เช่น จ.อุดรธานี
+    m = PROV_TAG_RE.search(s)
+
+    if m:
+        t = m.group(1)
+        for p in PROV_BY_LEN:
+            if t.startswith(p):
+                return p
+
+    # 2) มีชื่อจังหวัดอยู่ที่ไหนก็ได้ในข้อความ (เช่น TikTok ที่มีแค่ชื่อจังหวัด)
+    for p in PROV_BY_LEN:
+        if p in s:
+            return p
+
+    # 3) กรุงเทพฯ (กทม. / แขวง / Bangkok)
+    if BKK_RE.search(s):
+        return "กรุงเทพมหานคร"
+
+    return "ไม่ระบุที่อยู่"
 
 
 def _parse_note(note):
@@ -140,13 +189,17 @@ def _prepare(raw):
 
     df = raw.copy()
 
-    for c in [COL_NOTE, COL_BANK, COL_CUST, COL_NAME, COL_PHONE, COL_DISC]:
+    for c in [COL_NOTE, COL_BANK, COL_CUST, COL_NAME, COL_PHONE, COL_DISC,
+              COL_ADDR, COL_CANCEL]:
         if c not in df.columns:
             df[c] = pd.NA
 
     df[COL_ORDER] = df[COL_ORDER].astype(str).str.strip()
     df[COL_SALES] = pd.to_numeric(df[COL_SALES], errors="coerce").fillna(0)
     df[COL_DISC] = pd.to_numeric(df[COL_DISC], errors="coerce").fillna(0)
+
+    df["จังหวัด"] = df[COL_ADDR].map(_province)
+    df["ยกเลิก"] = df[COL_CANCEL].astype(str).str.upper().eq("TRUE")
 
     df["ช่องทาง"] = df[COL_CH].map(_norm_channel)
     df["เพจ/แบรนด์"] = df[COL_CH].map(_page_name)
@@ -380,7 +433,7 @@ def _tab_orders(df):
         key="wf_dl_orders"
     )
 
-    st.markdown("#### สรุปตามรหัส (จำนวนออเดอร์ / จำนวนชิ้น)")
+    st.markdown("#### รหัสพนักงานที่ขายสินค้า (จำนวนออเดอร์ / จำนวนชิ้น)")
 
     coded = v[v["รหัส (หมายเหตุ)"] != ""]
 
@@ -410,6 +463,126 @@ def _tab_orders(df):
             "ไฟล์นี้ไม่มีคอลัมน์จำนวนชิ้น จึงนับเป็น “จำนวนออเดอร์” "
             "และรหัส VX/VP/OB ดึงจากหมายเหตุ ยังไม่ยืนยันว่าเป็นรหัสสินค้า"
         )
+
+
+# =========================================================
+# แท็บ: ลูกค้า & พื้นที่
+# =========================================================
+
+def _first_valid(s):
+    """ค่าแรกที่ไม่ว่าง (ใช้เลือกชื่อ/จังหวัดของลูกค้า 1 รหัส)"""
+
+    s = s.dropna()
+    s = s[s.astype(str).str.strip() != ""]
+
+    return s.iloc[0] if len(s) else "-"
+
+
+def _tab_customer_area(df):
+
+    d = df[~df["ยกเลิก"] & df[COL_CUST].notna()]
+
+    if d.empty:
+        st.info("ไม่มีข้อมูลรหัสลูกค้า")
+        return
+
+    # ---------- สรุปรายลูกค้า ----------
+    cust = (
+        d.groupby(COL_CUST)
+        .agg(
+            ชื่อ=(COL_NAME, _first_valid),
+            จังหวัด=("จังหวัด", lambda x: _first_valid(x[x != "ไม่ระบุที่อยู่"])),
+            ช่องทาง=("ช่องทาง", lambda x: ", ".join(sorted(set(x)))),
+            ออเดอร์=(COL_ORDER, "count"),
+            ยอดขาย=(COL_SALES, "sum"),
+        )
+        .reset_index()
+        .rename(columns={COL_CUST: "รหัสลูกค้า"})
+    )
+
+    c = st.columns(4)
+
+    c[0].metric("ลูกค้า (รหัส)", f"{len(cust):,}")
+    c[1].metric("ลูกค้าซื้อซ้ำ (>1 ออเดอร์)", f"{(cust['ออเดอร์'] > 1).sum():,}")
+    c[2].metric("ยอดสูงสุด/ลูกค้า", _money(cust["ยอดขาย"].max()))
+    c[3].metric(
+        "ไม่ทราบจังหวัด",
+        f"{(d['จังหวัด'] == 'ไม่ระบุที่อยู่').sum():,} ออเดอร์",
+    )
+
+    # ---------- ลูกค้าที่ซื้อเยอะ ----------
+    st.markdown("#### รหัสลูกค้าที่ซื้อเยอะ")
+
+    f1, f2 = st.columns(2)
+
+    by = f1.radio(
+        "จัดอันดับตาม", ["ยอดขาย", "จำนวนออเดอร์"],
+        horizontal=True, key="wf_cu_by"
+    )
+    top_n = f2.slider("แสดง Top", 5, 50, 15, key="wf_cu_n")
+
+    sort_cols = ["ยอดขาย", "ออเดอร์"] if by == "ยอดขาย" else ["ออเดอร์", "ยอดขาย"]
+
+    top = cust.sort_values(sort_cols, ascending=False).head(top_n)
+
+    _show(top)
+
+    st.download_button(
+        "⬇️ ดาวน์โหลดลูกค้าทั้งหมด (CSV)",
+        data=cust.sort_values(sort_cols, ascending=False)
+        .to_csv(index=False).encode("utf-8-sig"),
+        file_name="customers_summary.csv",
+        mime="text/csv",
+        key="wf_dl_cust"
+    )
+
+    # ---------- พื้นที่ ----------
+    st.markdown("#### พื้นที่ที่ซื้อเยอะ (ตามจังหวัด)")
+
+    known = d[d["จังหวัด"] != "ไม่ระบุที่อยู่"]
+
+    prov = (
+        known.groupby("จังหวัด")
+        .agg(
+            ออเดอร์=(COL_ORDER, "count"),
+            ลูกค้า=(COL_CUST, "nunique"),
+            ยอดขาย=(COL_SALES, "sum"),
+        )
+        .reset_index()
+    )
+
+    prov["เฉลี่ย/ออเดอร์"] = (prov["ยอดขาย"] / prov["ออเดอร์"]).round(2)
+    prov["% ยอดขาย"] = (
+        prov["ยอดขาย"] / max(prov["ยอดขาย"].sum(), 1) * 100
+    ).round(1)
+
+    metric = st.radio(
+        "ดูตาม", ["ยอดขาย", "ออเดอร์"], horizontal=True, key="wf_cu_pm"
+    )
+
+    prov = prov.sort_values(metric, ascending=False)
+
+    fig = px.bar(
+        prov.head(15), x="จังหวัด", y=metric, text_auto=",.0f",
+        title=f"Top 15 จังหวัด ตาม{metric}"
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+    _show(prov)
+
+    st.caption(
+        f"ระบุจังหวัดได้ {len(known):,} จาก {len(d):,} ออเดอร์ "
+        "(ออเดอร์ที่ไม่มีที่อยู่ เช่น Lazada / Shopee COD ไม่ถูกนับ)"
+    )
+
+    # ---------- ลูกค้าในจังหวัด ----------
+    p = st.selectbox("ดูลูกค้าในจังหวัด", prov["จังหวัด"].tolist(), key="wf_cu_prov")
+
+    _show(
+        cust[cust["จังหวัด"] == p]
+        .sort_values(["ยอดขาย", "ออเดอร์"], ascending=False)
+    )
 
 
 # =========================================================
@@ -642,12 +815,14 @@ def render_work_files_page():
             "📊 ช่องทาง & ประเภท",
             "🚚 ขนส่ง",
             "🧾 ออเดอร์ / รหัส / จำนวน",
+            "👥 ลูกค้า & พื้นที่",
             "💡 Insight",
         ]
     )
 
     for tab, fn in zip(
-        tabs, [_tab_channel, _tab_carrier, _tab_orders, _tab_insight]
+        tabs,
+        [_tab_channel, _tab_carrier, _tab_orders, _tab_customer_area, _tab_insight],
     ):
         with tab:
             fn(df)
